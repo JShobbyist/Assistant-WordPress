@@ -1,0 +1,164 @@
+add_action("wp_ajax_openai_assistant_chatbot_response", "openai_assistant_chatbot_response");
+
+function openai_assistant_chatbot_response() {
+	if ( !wp_verify_nonce( $_REQUEST['nonce'], "openai_assistant_chatbot")) {
+		exit("No naughty business please");
+	}
+    $api_key = 'drive-api-key';
+    $assistant_id = 'asst_1xGz0TprKyaaseYxv1YF6gpNRp5ZBKfJI';
+    $api_url = 'https://api.openai.com/v1/threads';
+	$user_input = $_REQUEST['user_input'];
+
+	global $wpdb;
+	$table_name = $wpdb->prefix . 'ask_the_expert';
+	$wpdb->insert(
+        $table_name,
+        array(
+            'question' => 1,
+            'content' => $user_input
+        )
+    );
+
+    $args = [
+        'headers' => [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Bearer ' . $api_key,
+            'OpenAI-Beta' => ' assistants=v2'
+        ],
+    ];
+
+    $response = wp_remote_post($api_url, $args);
+    if (is_wp_error($response)) {
+        return 'Sorry, there was an error. Please try again later.';
+    } else {
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+		$thread_Id = $result['id'];
+		addMessage($thread_Id, $user_input, $api_key);
+		$createRuns_result = createRuns($thread_Id, $assistant_id, $api_key);
+		$run_Id= $createRuns_result['id'];
+		$checkRun_status = checkCompletion($thread_Id, $run_Id, $api_key);
+		$assistant_result = 'Failed to get answer. Please try again.';
+		if ( $checkRun_status == 'completed') {
+			$assistant_result = getMessage($thread_Id, $api_key);
+		}
+		$wpdb->insert(
+			$table_name,
+			array(
+				'question' => 0,
+				'content' => $assistant_result
+			)
+		);
+		echo $assistant_result;
+    }
+}
+
+
+function addMessage($thread_Id, $user_input, $api_key) {
+	$addMessage_api_url = 'https://api.openai.com/v1/threads/'.$thread_Id.'/messages';
+	$addMessage_data = new stdClass();
+	$addMessage_data->role = 'user';
+	$addMessage_data->content = $user_input;
+
+	$addMessage_args = [
+		'body' => json_encode($addMessage_data),
+		'headers' => [
+			'Content-Type' => 'application/json',
+			'Authorization' => 'Bearer ' . $api_key,
+			'OpenAI-Beta' => ' assistants=v2'
+		],
+	];
+
+	$addMessage_response = wp_remote_post($addMessage_api_url, $addMessage_args);
+	if (is_wp_error($addMessage_response)) {
+		return 'Sorry, there was an error. Please try again later. addMessage';
+	} else {
+		$addMessage_body = wp_remote_retrieve_body($addMessage_response);
+		$addMessage_result = json_decode($addMessage_body, true);
+	}
+}
+
+function createRuns($thread_Id, $assistant_id, $api_key){
+	$Runs_api_url = 'https://api.openai.com/v1/threads/'.$thread_Id.'/runs';
+	$Runs_data = new stdClass();
+	$Runs_data->assistant_id = $assistant_id;
+
+	$Runs_args = [
+		'body' => json_encode($Runs_data),
+		'headers' => [
+			'Content-Type' => 'application/json',
+			'Authorization' => 'Bearer ' . $api_key,
+			'OpenAI-Beta' => ' assistants=v2'
+		],
+	];
+
+	$Runs_response = wp_remote_post($Runs_api_url, $Runs_args);
+	if (is_wp_error($Runs_response)) {
+		return 'Sorry, there was an error. Please try again later.';
+	} else {
+		$Runs_body = wp_remote_retrieve_body($Runs_response);
+		$Runs_result = json_decode($Runs_body, true);
+		return $Runs_result;
+	}
+}
+
+function checkCompletion($thread_Id, $run_Id, $api_key) {
+	while(true) {
+		sleep(2);
+		$checkStatus_response_result = checkStatus($thread_Id, $run_Id, $api_key);
+		if ($checkStatus_response_result['status'] == 'completed') {
+			return $checkStatus_response_result['status'];
+			break;
+		} elseif ($checkStatus_response_result['status'] == 'failed' || $checkStatus_response_result['status'] == 'expired') {
+			return $checkStatus_response_result['status'];
+			break;
+		}else {
+			continue;
+		}
+	}
+}
+
+function checkStatus($thread_Id, $run_Id, $api_key) {
+	$checkStatus_api_url = 'https://api.openai.com/v1/threads/'.$thread_Id.'/runs/'.$run_Id;
+
+	$checkStatus_args = [
+		'headers' => [
+			'Content-Type' => 'application/json',
+			'Authorization' => 'Bearer ' . $api_key,
+			'OpenAI-Beta' => ' assistants=v2'
+		],
+	];
+
+	$checkStatus_response = wp_remote_get($checkStatus_api_url, $checkStatus_args);
+	if (is_wp_error($checkStatus_response)) {
+		return 'Sorry, there was an error. Please try again later.';
+	} else {
+		$checkStatus_body = wp_remote_retrieve_body($checkStatus_response);
+		$checkStatus_result = json_decode($checkStatus_body, true);
+		return $checkStatus_result;
+	}
+}
+
+function getMessage($thread_Id, $api_key) {
+	$getMessage_api_url = 'https://api.openai.com/v1/threads/'.$thread_Id.'/messages';
+	
+	$getMessage_args = [
+		'headers' => [
+			'Content-Type' => 'application/json',
+			'Authorization' => 'Bearer ' . $api_key,
+			'OpenAI-Beta' => ' assistants=v2'
+		],
+	];
+
+	$getMessage_response = wp_remote_get($getMessage_api_url, $getMessage_args);
+	if (is_wp_error($getMessage_response)) {
+		return 'Sorry, there was an error. Please try again later.';
+	} else {
+		$getMessage_body = wp_remote_retrieve_body($getMessage_response);
+		$getMessage_result = json_decode($getMessage_body, true);
+		$ass_answer = $getMessage_result['data'][0]['content'][0]['text']['value'];
+		$ass_answer_cleaned = preg_replace('/【\d+(?::\d+)?†[\w\s.]*】/', '', $ass_answer); // Replace all bracketed sources with nothing
+		$ass_answer_cleaned = preg_replace('/\*\*(.*?)\*\*/s', '<b>$1</b>', $ass_answer_cleaned); // Replace all ** with <b> for Markup language
+		return nl2br($ass_answer_cleaned);
+	}
+}
