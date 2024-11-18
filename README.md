@@ -1,2 +1,2 @@
-# Assistant-WordPress
-Wordpress and openai Assistant integration
+# Assistant-backend
+Backend for openai Assistant integration
